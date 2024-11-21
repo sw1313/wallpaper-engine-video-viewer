@@ -2,6 +2,7 @@
 用AI生成的基于Pyside6的视频查看器
 
 ## 使用方法
+windows系统下运行
 第一次运行时会让你选择Wallpaper Engine的下载路径
 一般在C:\Program Files (x86)\Steam\steamapps\workshop\content\一串数字\
 
@@ -13,7 +14,7 @@
 
 输入页码需要输入指定页码，回车应用
 
-![Image](/Snipaste_2024-11-22_06-08-54.png)
+![Image](Snipaste_2024-11-22_06-08-54.png)
 
 推荐在2k分辨率下使用
 
