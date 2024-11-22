@@ -153,7 +153,7 @@ class MainWindow(QMainWindow):
                         content_rating = project_data.get("contentrating", "")  # 获取内容评级
 
                         # 只显示 type 为 "video" 的视频
-                        if video_type != "video":
+                        if video_type.lower() != "video":
                             continue
 
                         # 如果复选框被选中，检查 contentrating
