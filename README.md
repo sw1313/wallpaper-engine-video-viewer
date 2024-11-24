@@ -1,5 +1,5 @@
 # Wallpaper Engine 视频查看器
-用AI生成的基于Pyside6的视频查看器
+用AI生成的Wallpaper Engine视频查看器
 
 ## 使用方法
 windows系统下运行
