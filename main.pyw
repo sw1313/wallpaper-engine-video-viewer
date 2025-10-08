@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import math
 import tempfile
 import ctypes
 import webbrowser
@@ -18,6 +19,10 @@ from PySide6.QtCore import (
     Qt, QSize, QRect, QPoint, Signal, QObject, QEvent, QTimer, QFileSystemWatcher,
     QByteArray, QBuffer, QIODevice
 )
+
+# ====== 常量：统一最小间距、最小方框边长 ======
+MIN_SPACING = 8          # 上下左右 & 网格间距都用它
+MIN_TILE_EDGE = 180      # 方框最小边长（会随窗口变大）
 
 
 # =========================
@@ -203,7 +208,8 @@ class BaseTile(QFrame):
 
     def __init__(self, title: str):
         super().__init__()
-        self.setFixedSize(180, 180)
+        self._edge = MIN_TILE_EDGE
+        self.setFixedSize(self._edge, self._edge)
         self._selected = False
 
         self._title_label = QLabel(title, self)
@@ -217,12 +223,23 @@ class BaseTile(QFrame):
         self._title_label.setFont(font)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addStretch()
         layout.addWidget(self._title_label)
         self.setLayout(layout)
 
         self.setMouseTracking(True)
         self.setFrameShape(QFrame.StyledPanel)
+
+    def setTileEdge(self, edge: int):
+        if edge <= 0 or edge == self._edge:
+            return
+        self._edge = edge
+        self.setFixedSize(edge, edge)
+        self.update()
+
+    def tileEdge(self) -> int:
+        return self._edge
 
     def setSelected(self, val: bool):
         self._selected = val
@@ -258,9 +275,10 @@ class BaseTile(QFrame):
 class VideoTile(BaseTile):
     """
     预览懒加载 + 防锁定：
-      - 第一次显示时把 GIF 读入内存（bytes -> QByteArray -> QBuffer）
-      - 用 QBuffer 作为 QMovie 的 QIODevice，避免 QMovie 长时间占用磁盘文件句柄
-      - 隐藏/翻页/销毁时及时释放 QMovie 与 QBuffer
+      - 把 GIF 读入内存（bytes -> QByteArray -> QBuffer）
+      - 用 QBuffer 作为 QMovie 的 QIODevice，避免占用磁盘文件句柄
+      - 隐藏/翻页/销毁时释放 QMovie 与 QBuffer
+      - 随 tile 尺寸变化动态缩放 QMovie
     """
     def __init__(self, item: VideoItem):
         super().__init__(item.title)
@@ -268,8 +286,18 @@ class VideoTile(BaseTile):
         self._movie: Optional[QMovie] = None
         self._buf: Optional[QBuffer] = None
         self._data: Optional[QByteArray] = None
-        self._placeholder = QPixmap(180, 180)
+        self._placeholder = QPixmap(self.tileEdge(), self.tileEdge())
         self._placeholder.fill(QColor(10, 10, 10))
+
+    def setTileEdge(self, edge: int):
+        old = self.tileEdge()
+        super().setTileEdge(edge)
+        if edge != old:
+            self._placeholder = QPixmap(edge, edge)
+            self._placeholder.fill(QColor(10, 10, 10))
+            if self._movie is not None and self._movie.isValid():
+                self._movie.setScaledSize(QSize(edge, edge))
+            self.update()
 
     def ensure_movie(self):
         if self._movie is not None:
@@ -284,7 +312,7 @@ class VideoTile(BaseTile):
             fmt = QByteArray(b"gif") if ext.endswith("gif") else QByteArray()
             self._movie = QMovie(self._buf, fmt)
             self._movie.setCacheMode(QMovie.CacheAll)
-            self._movie.setScaledSize(QSize(180, 180))
+            self._movie.setScaledSize(QSize(self.tileEdge(), self.tileEdge()))
             self._movie.frameChanged.connect(self.update)
             self._movie.start()
         except Exception:
@@ -341,9 +369,9 @@ class FolderTile(BaseTile):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(30, 30, 30))
-        lid = QRect(20, 40, 140, 25)
+        lid = QRect(int(self.width() * 0.11), int(self.height() * 0.22), int(self.width() * 0.78), int(self.height() * 0.14))
         painter.fillRect(lid, QColor(200, 170, 60, 200))
-        body = QRect(15, 65, 150, 85)
+        body = QRect(int(self.width() * 0.08), int(self.height() * 0.36), int(self.width() * 0.84), int(self.height() * 0.47))
         painter.fillRect(body, QColor(230, 190, 70, 220))
         rect_y = self.height() - (self.labelRect().height() + 10)
         painter.setBrush(QColor(0, 0, 0, 110))
@@ -363,8 +391,9 @@ class MainWindow(QMainWindow):
         self.workshop_root = os.path.abspath(workshop_path)
         self.we_path = we_path
 
-        # 参数
-        self.columns = 5
+        # 动态布局参数
+        self.columns = 1
+        self.tile_edge = MIN_TILE_EDGE
         self.page_size = 45
         self.current_page = 0
 
@@ -381,18 +410,27 @@ class MainWindow(QMainWindow):
         self._rubber_origin = QPoint()
         self._rubber_active = False
 
+        # === UI ===
         central = QWidget(self)
         self.setCentralWidget(central)
 
         self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
+        # 关键：不要让内容被强行拉伸到视口大小
+        self.scroll_area.setWidgetResizable(False)
+        # 关键：内容小于视口时，靠左并贴顶
+        self.scroll_area.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.scroll_area.setStyleSheet("border: none;")
 
         self.layout = QVBoxLayout(central)
+        self.layout.setContentsMargins(MIN_SPACING, MIN_SPACING, MIN_SPACING, MIN_SPACING)
+        self.layout.setSpacing(MIN_SPACING)
         self.layout.addWidget(self.scroll_area)
 
         # 顶部工具条
         self.pagination_layout = QHBoxLayout()
+        self.pagination_layout.setContentsMargins(0, 0, 0, 0)
+        self.pagination_layout.setSpacing(MIN_SPACING)
+
         self.back_btn = QPushButton("← 返回上一级")
         self.back_btn.clicked.connect(self.nav_back)
         self.refresh_btn = QPushButton("刷新")
@@ -407,8 +445,7 @@ class MainWindow(QMainWindow):
         self.sort_combo.currentIndexChanged.connect(self.refresh_grid)
 
         self.prev_button = QPushButton("上一页")
-        the_next = QPushButton("下一页")
-        self.next_button = the_next
+        self.next_button = QPushButton("下一页")
         self.prev_button.clicked.connect(self.previous_page)
         self.next_button.clicked.connect(self.next_page)
 
@@ -435,16 +472,16 @@ class MainWindow(QMainWindow):
 
         # 内容网格
         self.content_widget = QWidget()
-        self.scroll_area.setWidget(self.content_widget)
         self.grid_layout = QGridLayout(self.content_widget)
-        self.grid_layout.setSpacing(8)
-        self.grid_layout.setContentsMargins(6, 6, 6, 6)
+        self.grid_layout.setSpacing(MIN_SPACING)
+        self.grid_layout.setContentsMargins(MIN_SPACING, MIN_SPACING, MIN_SPACING, MIN_SPACING)
         self.content_widget.installEventFilter(self)
+        self.scroll_area.setWidget(self.content_widget)
 
         # 初次加载
         self.reload_everything()
 
-        # 文件系统监听
+        # === 文件系统监听：config.json + workshop 根目录 ===
         self._fswatcher = QFileSystemWatcher(self)
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -458,6 +495,41 @@ class MainWindow(QMainWindow):
             self._fswatcher.addPath(self.workshop_root)
         self._fswatcher.fileChanged.connect(self._on_fs_event)
         self._fswatcher.directoryChanged.connect(self._on_fs_event)
+
+    # ---------- 首次显示后再做一次布局（修复启动只有一列） ----------
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(0, self._after_first_show)
+
+    def _after_first_show(self):
+        cols, edge = self.compute_grid_metrics()
+        if cols != self.columns or edge != self.tile_edge:
+            self.columns, self.tile_edge = cols, edge
+            self.refresh_grid()
+
+    # ---------- 自适应：根据视口宽度计算列数与 tile 边长 ----------
+
+    def compute_grid_metrics(self) -> Tuple[int, int]:
+        """返回 (columns, tile_edge)，保持固定间距，尽量多列；tile 可变大。"""
+        viewport = self.scroll_area.viewport()
+        w = max(0, viewport.width() - 2 * MIN_SPACING)
+        if w <= 0:
+            return 1, MIN_TILE_EDGE
+        # 尽量多放列；列数至少 1
+        cols = max(1, int((w + MIN_SPACING) // (MIN_TILE_EDGE + MIN_SPACING)))
+        # 根据列数反推本次方框边长，保证左右间距固定为 MIN_SPACING
+        edge = int((w - (cols - 1) * MIN_SPACING) // cols)
+        edge = max(edge, MIN_TILE_EDGE)
+        return cols, edge
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        cols, edge = self.compute_grid_metrics()
+        if cols != self.columns or edge != self.tile_edge:
+            self.columns = cols
+            self.tile_edge = edge
+            self.refresh_grid()
 
     # ---------- 监听与刷新 ----------
 
@@ -486,6 +558,9 @@ class MainWindow(QMainWindow):
             self.current_item_ids = self.root_unassigned_ids[:]
             self.breadcrumb.setText("当前位置：/")
             self.current_page = 0
+
+            # 初始化一次度量
+            self.columns, self.tile_edge = self.compute_grid_metrics()
             self.refresh_grid()
         finally:
             QApplication.restoreOverrideCursor()
@@ -541,7 +616,7 @@ class MainWindow(QMainWindow):
         self.current_page = 0
         self.refresh_grid()
 
-    # ---------- 数据/分页 ----------
+    # ---------- 数据/分页（仅按需构建可见页） ----------
 
     def current_videos_filtered_sorted(self) -> List[str]:
         ids: List[str] = []
@@ -567,6 +642,11 @@ class MainWindow(QMainWindow):
         return ids
 
     def refresh_grid(self):
+        # 再确认一次度量（极端场景）
+        cols, edge = self.compute_grid_metrics()
+        self.columns, self.tile_edge = cols, edge
+
+        # 清空旧页
         while self.grid_layout.count():
             item = self.grid_layout.takeAt(0)
             if w := item.widget():
@@ -579,6 +659,7 @@ class MainWindow(QMainWindow):
         total_tiles = len(folders) + len(video_ids_sorted)
         start = self.current_page * self.page_size
         end = min(start + self.page_size, total_tiles)
+        page_tiles = end - start
 
         row = 0
         for pos in range(start, end):
@@ -586,6 +667,7 @@ class MainWindow(QMainWindow):
                 node = folders[pos]
                 count = self._count_items_recursive(node)
                 tile = FolderTile(node.title, count)
+                tile.setTileEdge(self.tile_edge)
                 tile.doubleActivated.connect(lambda t, node=node: self.enter_folder(node))
                 tile.clicked.connect(self.on_tile_clicked)
                 tile.contextRequested.connect(self.on_tile_context)
@@ -594,6 +676,7 @@ class MainWindow(QMainWindow):
                 vid_id = video_ids_sorted[vid_index]
                 v = self.id_map[vid_id]
                 tile = VideoTile(v)
+                tile.setTileEdge(self.tile_edge)
                 tile.doubleActivated.connect(lambda t, item=v: self.play_single(item))
                 tile.clicked.connect(self.on_tile_clicked)
                 tile.contextRequested.connect(self.on_tile_context)
@@ -604,11 +687,26 @@ class MainWindow(QMainWindow):
             if col == self.columns - 1:
                 row += 1
 
+        # 分页控件
         self.prev_button.setEnabled(self.current_page > 0)
         self.next_button.setEnabled(end < total_tiles)
         total_pages = max(1, (total_tiles + self.page_size - 1) // self.page_size)
         self.page_info_label.setText(f"当前页: {self.current_page + 1} / {total_pages}")
         self._last_focus_index = None
+
+        # 关键：根据“本页实际行列数”设置内容部件大小，防止被拉伸导致间距变化
+        rows = max(1, math.ceil(page_tiles / max(1, self.columns))) if page_tiles > 0 else 1
+        used_cols = min(self.columns, page_tiles) if page_tiles > 0 else 1
+
+        m = self.grid_layout.contentsMargins()
+        inner_w = used_cols * self.tile_edge + (used_cols - 1) * MIN_SPACING
+        inner_h = rows * self.tile_edge + (rows - 1) * MIN_SPACING
+        total_w = inner_w + m.left() + m.right()
+        total_h = inner_h + m.top() + m.bottom()
+
+        # 固定内容大小，让 QScrollArea 以左上对齐展示；上下/左右间距恒定
+        self.content_widget.setMinimumSize(total_w, total_h)
+        self.content_widget.resize(total_w, total_h)
 
     def _count_items_recursive(self, node: FolderNode) -> int:
         total = len(node.items)
@@ -629,7 +727,7 @@ class MainWindow(QMainWindow):
         if self.current_page > 0:
             self.current_page -= 1
             self.refresh_grid()
-        self.scroll_area.verticalScrollBar().setValue(0)
+            self.scroll_area.verticalScrollBar().setValue(0)
 
     def jump_to_page(self):
         try:
@@ -857,6 +955,8 @@ class MainWindow(QMainWindow):
                 errors.append(f"{d} → {e}")
         if errors:
             QMessageBox.warning(self, "部分失败", "以下文件夹未能打开：\n" + "\n".join(errors))
+
+    # === 删除：将 10 位 ID 的创意工坊文件夹移到回收站（Windows） ===
 
     def _find_10digit_id_dir(self, any_path: str) -> Optional[str]:
         p = os.path.abspath(any_path)
