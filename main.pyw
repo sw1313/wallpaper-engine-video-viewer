@@ -409,6 +409,7 @@ class MainWindow(QMainWindow):
         self._rubber: Optional[QRubberBand] = None
         self._rubber_origin = QPoint()
         self._rubber_active = False
+        self.filter_text: str = ""  # ← 标题筛选文本
 
         # === UI ===
         central = QWidget(self)
@@ -458,6 +459,13 @@ class MainWindow(QMainWindow):
         self.rating_check = QCheckBox("只显示成人内容", self)
         self.rating_check.stateChanged.connect(self.refresh_grid)
 
+        # —— 新增：标题筛选文本框（放在工具栏最右侧） —— #
+        self.filter_input = QLineEdit(self)
+        self.filter_input.setPlaceholderText("筛选标题…")
+        self.filter_input.setClearButtonEnabled(True)
+        self.filter_input.setFixedWidth(220)
+        self.filter_input.textChanged.connect(self.on_filter_text_changed)
+
         self.pagination_layout.addWidget(self.back_btn)
         self.pagination_layout.addWidget(self.refresh_btn)
         self.pagination_layout.addWidget(self.breadcrumb)
@@ -468,6 +476,9 @@ class MainWindow(QMainWindow):
         self.pagination_layout.addWidget(self.page_info_label)
         self.pagination_layout.addWidget(self.page_input)
         self.pagination_layout.addWidget(self.rating_check)
+        # 新增文本框加在最后，保持最右侧
+        self.pagination_layout.addWidget(self.filter_input)
+
         self.layout.addLayout(self.pagination_layout)
 
         # 内容网格
@@ -495,6 +506,32 @@ class MainWindow(QMainWindow):
             self._fswatcher.addPath(self.workshop_root)
         self._fswatcher.fileChanged.connect(self._on_fs_event)
         self._fswatcher.directoryChanged.connect(self._on_fs_event)
+
+    # ---------- 新增：筛选逻辑 ----------
+
+    def on_filter_text_changed(self, text: str):
+        self.filter_text = text.strip()
+        self.current_page = 0
+        self.refresh_grid()
+
+    def _collect_ids_recursive_from_nodes(self, nodes: List[FolderNode]) -> List[str]:
+        """递归收集一组节点下的所有 item id。"""
+        out: List[str] = []
+        for n in nodes:
+            out.extend(n.items)
+            if n.subfolders:
+                out.extend(self._collect_ids_recursive_from_nodes(n.subfolders))
+        return out
+
+    def _all_ids_in_scope_for_filter(self) -> List[str]:
+        """
+        有筛选词时的候选范围：
+        - 当前文件夹直接 items（self.current_item_ids）
+        - 加上所有子文件夹里的 items（递归）
+        """
+        ids = set(self.current_item_ids)
+        ids.update(self._collect_ids_recursive_from_nodes(self.current_subfolders))
+        return list(ids)
 
     # ---------- 首次显示后再做一次布局（修复启动只有一列） ----------
 
@@ -620,12 +657,25 @@ class MainWindow(QMainWindow):
 
     def current_videos_filtered_sorted(self) -> List[str]:
         ids: List[str] = []
-        for vid_id in self.current_item_ids:
+        # 标题筛选关键词（空格分词，全部包含）
+        tokens = [t for t in self.filter_text.split() if t] if self.filter_text else []
+
+        # 有筛选词时：候选范围 = 当前目录 items + 所有子文件夹 items（递归）
+        if tokens:
+            base_ids = self._all_ids_in_scope_for_filter()
+        else:
+            base_ids = list(self.current_item_ids)
+
+        for vid_id in base_ids:
             item = self.id_map.get(vid_id)
             if not item:
                 continue
             if self.rating_check.isChecked() and item.rating != "Mature":
                 continue
+            if tokens:
+                title_cf = item.title.casefold()
+                if not all(tok.casefold() in title_cf for tok in tokens):
+                    continue
             ids.append(vid_id)
 
         idx = self.sort_combo.currentIndex()
@@ -653,7 +703,8 @@ class MainWindow(QMainWindow):
                 w.deleteLater()
         self._tiles.clear()
 
-        folders = list(self.current_subfolders)
+        # 有筛选词：隐藏文件夹，只显示匹配的视频；无筛选词：正常显示文件夹 + 视频
+        folders = [] if self.filter_text else list(self.current_subfolders)
         video_ids_sorted = self.current_videos_filtered_sorted()
 
         total_tiles = len(folders) + len(video_ids_sorted)
@@ -715,7 +766,7 @@ class MainWindow(QMainWindow):
         return total
 
     def next_page(self):
-        folders_count = len(self.current_subfolders)
+        folders_count = 0 if self.filter_text else len(self.current_subfolders)
         videos_count = len(self.current_videos_filtered_sorted())
         total_tiles = folders_count + videos_count
         if (self.current_page + 1) * self.page_size < total_tiles:
@@ -736,7 +787,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "请输入数字。")
             return
 
-        folders_count = len(self.current_subfolders)
+        folders_count = 0 if self.filter_text else len(self.current_subfolders)
         videos_count = len(self.current_videos_filtered_sorted())
         total_tiles = folders_count + videos_count
         total_pages = max(1, (total_tiles + self.page_size - 1) // self.page_size)
