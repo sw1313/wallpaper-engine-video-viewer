@@ -945,17 +945,57 @@ class MainWindow(QMainWindow):
                 return n
         return None
 
-    def _gather_folder_items(self, node: FolderNode) -> List[VideoItem]:
+    # ---------- 新增：排序工具，保证播放与界面一致 ----------
+
+    def _video_sort_key_and_reverse(self):
+        """返回(取key的函数, 是否降序)，与界面排序选项完全一致。"""
+        idx = self.sort_combo.currentIndex()
+        # 0: 修改日期降序, 1: 修改日期升序,
+        # 2: 文件大小降序, 3: 文件大小升序,
+        # 4: 文件名降序, 5: 文件名升序
+        if idx == 0:
+            return (lambda it: it.mtime, True)
+        elif idx == 1:
+            return (lambda it: it.mtime, False)
+        elif idx == 2:
+            return (lambda it: it.size, True)
+        elif idx == 3:
+            return (lambda it: it.size, False)
+        elif idx == 4:
+            return (lambda it: it.title, True)
+        else:
+            return (lambda it: it.title, False)
+
+    def _sort_videos(self, videos: List['VideoItem']) -> List['VideoItem']:
+        key, rev = self._video_sort_key_and_reverse()
+        return sorted(videos, key=key, reverse=rev)
+
+    # ---------- 播放逻辑（按你的顺序规则） ----------
+
+    def _gather_folder_items(self, node: 'FolderNode') -> List['VideoItem']:
+        """收集 node 及其子树下的所有视频：
+           - 先递归所有子文件夹（保持文件夹出现的原始顺序）
+           - 再收集本文件夹中的视频，并按界面排序规则排序
+           - 勾选“只显示成人内容”时，仅保留 Mature
+        """
         out: List[VideoItem] = []
-        for iid in node.items:
-            it = self.id_map.get(iid)
-            if it and (not self.rating_check.isChecked() or it.rating == "Mature"):
-                out.append(it)
+
+        # 1) 子文件夹优先
         for sf in node.subfolders:
             out.extend(self._gather_folder_items(sf))
-        return out
 
-    # ---------- 单项操作（复用批量实现） ----------
+        # 2) 本层视频，按当前排序
+        vids_here: List[VideoItem] = []
+        for iid in node.items:
+            it = self.id_map.get(iid)
+            if not it:
+                continue
+            if self.rating_check.isChecked() and it.rating != "Mature":
+                continue
+            vids_here.append(it)
+
+        out.extend(self._sort_videos(vids_here))
+        return out
 
     def play_single(self, item: VideoItem):
         try:
@@ -1094,7 +1134,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "删除失败", f"删除时出错：{e}")
 
-    # ---------- 播放逻辑（原样保留） ----------
+    # ---------- 播放逻辑（原样保留 + 顺序规则一致） ----------
 
     def play_folders(self, folders: List[FolderNode]):
         videos: List[VideoItem] = []
@@ -1102,16 +1142,29 @@ class MainWindow(QMainWindow):
             videos.extend(self._gather_folder_items(f))
         self._play_as_playlist(videos)
 
-    def play_mixed(self, videos: List[VideoItem], folders: List[FolderNode]):
-        all_videos = list(videos)
+    def play_mixed(self, videos: List['VideoItem'], folders: List['FolderNode']):
+        # 1) 先放所有选中的文件夹（保持它们在界面中被选中的顺序）
+        ordered: List[VideoItem] = []
         for f in folders:
-            all_videos.extend(self._gather_folder_items(f))
+            ordered.extend(self._gather_folder_items(f))
+
+        # 2) 再放“外面的文件”（即直接选中的视频），并按当前排序
+        singles: List[VideoItem] = []
+        for v in videos:
+            if not self.rating_check.isChecked() or v.rating == "Mature":
+                singles.append(v)
+        singles = self._sort_videos(singles)
+
+        combined = ordered + singles
+
+        # 3) 去重（按出现顺序保留第一项）
         seen: Set[str] = set()
         uniq: List[VideoItem] = []
-        for v in all_videos:
+        for v in combined:
             if v.video_path not in seen:
                 seen.add(v.video_path)
                 uniq.append(v)
+
         self._play_as_playlist(uniq)
 
     def _play_as_playlist(self, videos: List[VideoItem]):
