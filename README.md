@@ -17,7 +17,7 @@ windows系统下运行
 
 新增：</br>
 1.读取config.json文件识别用户文件夹分类</br>
-2.批量播放（使用m3u播放列表，确保有视频播放器可以读取，比如potplayer）</br>
+2.批量播放（使用m3u播放列表，确保有视频播放器可以读取，比如potplayer，建议用mpv，开启速度快很多，如果是HDR显示器需要在C:\Users\(用户)\AppData\Roaming\mpv\mpv.conf写入'vo=sdl'要不显示不正常。</br>
 3.打开文件所在文件夹</br>
 4.删除（有些文件取消订阅了但是we未正常删除）</br>
 5.打开创意工坊链接（方便取消订阅，由于没有api，只能手动，如果想稍微再快点，参考：https://github.com/sw1313/we-video-preview</br>
