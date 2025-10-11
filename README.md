@@ -15,14 +15,15 @@ windows系统下运行
 
 输入页码需要输入指定页码，回车应用
 
-新增：</br>
-1.读取config.json文件识别用户文件夹分类</br>
-2.批量播放（使用m3u播放列表，确保有视频播放器可以读取，比如potplayer，建议用mpv，开启速度快很多，如果是HDR显示器需要在`C:\Users\(用户)\AppData\Roaming\mpv\mpv.conf`（没有的新建）写入`vo=sdl`要不显示不正常。</br>
-3.打开文件所在文件夹</br>
-4.删除（有些文件取消订阅了但是we未正常删除）</br>
-5.打开创意工坊链接（方便取消订阅，由于没有api，只能手动，如果想稍微再快点，参考：https://github.com/sw1313/we-video-preview</br>
-这样在软件里就可以快速预览，看到不想要的就顺手右键取消订阅了）</br>
-</br>
-不适合展出，图片就不单独展示了</br>
-</br>
-推荐在2k分辨率下使用</br>
+新增：  
+1.读取config.json文件识别用户文件夹分类  
+2.批量播放（使用m3u播放列表，确保有视频播放器可以读取，比如potplayer，建议用mpv，开启速度快很多，如果是HDR显示器需要在`C:\Users\(用户)\AppData\Roaming\mpv\mpv.conf`（没有的新建）写入`vo=sdl`要不显示不正常。  
+3.打开文件所在文件夹  
+4.删除（有些文件取消订阅了但是we未正常删除）  
+5.打开创意工坊链接（方便取消订阅，由于没有api，只能手动，如果想稍微再快点，参考：https://github.com/sw1313/we-video-preview  
+这样在软件里就可以快速预览，看到不想要的就顺手右键取消订阅了）  
+  
+不适合展出，图片就不单独展示了  
+  
+推荐在2k分辨率下使用  
+webui版本(容器部署，多端浏览）：https://github.com/sw1313/wallpaper-engine-video-viewer-webui
